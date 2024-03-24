@@ -101,12 +101,13 @@ void skip_spaces(const char **s) {
 #define op_or        0x15
 #define op_jmp       0x16
 #define op_jfalse    0x17
+#define op_halt      0x18
 
 double eval_expression(Expr *E) {
     double *sp = alloca(E->stack_size * sizeof(double));
-    unsigned char *code = E->code, *ip = code, *end = ip + E->code_size;
+    unsigned char *code = E->code, *ip = code;
     #define FETCH(T_) ({ T_ x_; memcpy(&x_, ip, sizeof(x_)); ip += sizeof(x_); x_; })
-    while (ip != end) {
+    for(;;) {
         switch(*ip++) {
             case op_drop: sp--; continue;
             case op_constant: *sp++ = FETCH(double); continue;
@@ -132,10 +133,12 @@ double eval_expression(Expr *E) {
             case op_or: sp[-2] = sp[-2]!=0 || sp[-1]!=0; --sp; continue;
             case op_jmp: { int addr = FETCH(int); ip = code+addr; } continue;
             case op_jfalse: { int addr = FETCH(int); if (sp[-1] == 0) ip = code+addr; } continue;
+            case op_halt: return sp[-1];
         }
     }
     #undef FETCH
-    return sp[-1];
+    error("Internal error; unreachable code");
+    return 0;
 }
 
 typedef struct TOperator {
@@ -290,6 +293,7 @@ static void parse(Expr *E, const char **s, int level, int sp) {
 Expr *parse_expression(const char **s) {
     Expr *E = allocate_expression();
     parse(E, s, MAX_LEVEL, 0);
+    emit(E, op_halt);
     return E;
 }
 
