@@ -23,10 +23,15 @@ blocks with syntax
 
     { <expr1>; <expr2>; ... <exprn>[;] }
 
-and while loops with syntax
+while loops with syntax
 
     while ( <test-expr> ) <block>
 
+conditionals with syntax
+
+    if ( <test-expr> ) <block> [ else <block> ]
+
+(a missing else clause will return 0 if the test evaluates to 0)
 
 Only data type is IEEE754 double-precision (C `double`); casting to `unsigned` for bitwise operations.
 

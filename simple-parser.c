@@ -162,6 +162,18 @@ static Operator ops[] = {
 
 #define MAX_LEVEL 9
 
+static int num(int c) {
+    return c >= '0' && c <= '9';
+}
+
+static int alpha(int c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+static int alphanum(int c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||  c == '_';
+}
+
 static void parse(Expr *E, const char **s, int level, int sp) {
     if (level == 0) {
         skip_spaces(s);
@@ -193,20 +205,20 @@ static void parse(Expr *E, const char **s, int level, int sp) {
             parse(E, s, 0, sp);
             emit(E, op_neg);
             return;
-        } else if ((**s >= '0' && **s <= '9') || **s == '.') {
+        } else if (num(**s) || **s == '.') {
             const char *s0 = *s;
             int ok = 0;
-            while (**s >= '0' && **s <= '9') { ok=1; ++(*s); }
+            while (num(**s)) { ok=1; ++(*s); }
             if (**s == '.') {
                 ++(*s);
-                while (**s >= '0' && **s <= '9') { ok=1; ++(*s); }
+                while (num(**s)) { ok=1; ++(*s); }
             }
             if (!ok) error("Digits required either before or after decimal point");
             if (**s == 'e' || **s == 'E') {
                 ++(*s);
                 if (**s == '+' || **s == '-') ++(*s);
-                if (!(**s >= '0' && **s <= '9')) error("Digits required for exponent");
-                while (**s >= '0' && **s <= '9') ++(*s);
+                if (!num(**s)) error("Digits required for exponent");
+                while (num(**s)) ++(*s);
             }
             char *e = NULL;
             double v = strtod(s0, &e);
@@ -215,12 +227,9 @@ static void parse(Expr *E, const char **s, int level, int sp) {
             emit_bytes(E, &v, sizeof(v));
             if (sp+1 > E->stack_size) E->stack_size = sp+1;
             return;
-        } else if ((**s >= 'a' && **s <= 'z') || (**s >= 'A' && **s <= 'Z') || **s == '_') {
+        } else if (alpha(**s)) {
             const char *s0 = *s;
-            while ((**s >= 'a' && **s <= 'z') || (**s >= 'A' && **s <= 'Z') || **s == '_' ||
-                   (**s >= '0' && **s <= '9')) {
-               ++(*s);
-            }
+            while (alphanum(**s)) ++(*s);
             int n = *s - s0, i = 0;
             if (n == 5 && strncmp(s0, "while", 5) == 0) {
                 skip_spaces(s);
@@ -238,6 +247,31 @@ static void parse(Expr *E, const char **s, int level, int sp) {
                 emit(E, op_jmp);
                 emit_bytes(E, &test_addr, sizeof(test_addr));
                 memcpy(E->code + jquit, &E->code_size, sizeof(E->code_size));
+                return;
+            } else if (n == 2 && strncmp(s0, "if", 2) == 0) {
+                skip_spaces(s);
+                if (**s != '(') error("'(' expected after 'if' keyword");
+                parse(E, s, 0, sp);
+                emit(E, op_jfalse);
+                int jfalse = E->code_size; emit_bytes(E, &jfalse, sizeof(int));
+                skip_spaces(s);
+                if (**s != '{') error("'{' expected");
+                emit(E, op_drop);
+                parse(E, s, 0, sp);
+                emit(E, op_jmp);
+                int jquit = E->code_size; emit_bytes(E, &jquit, sizeof(int));
+                memcpy(E->code+jfalse, &E->code_size, sizeof(int));
+                skip_spaces(s);
+                if (strncmp(*s, "else", 4) == 0 && !alphanum(*(*s+4))) {
+                    (*s) += 4;
+                    skip_spaces(s);
+                    if (**s != '{') error("'{' expected");
+                    emit(E, op_drop);
+                    parse(E, s, 0, sp);
+                } else {
+                    double v = 0; emit(E, op_constant); emit_bytes(E, &v, sizeof(v));
+                }
+                memcpy(E->code+jquit, &E->code_size, sizeof(int));
                 return;
             }
             while (i<E->var_size && (strncmp(E->var_names[i], s0, n) != 0 || E->var_names[i][n] != '\0')) {
