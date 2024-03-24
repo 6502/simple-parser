@@ -22,18 +22,6 @@ void mem_dealloc(void *p) {
     if (p) free(p);
 }
 
-struct TExpr;
-
-typedef struct TVMContext {
-    struct TExpr *expr;
-    double *sp;
-    const unsigned char *ip;
-} VMContext;
-
-#define FETCH(vm_, T_) ({ T_ x_; memcpy(&x_, (vm_)->ip, sizeof(x_)); (vm_)->ip += sizeof(x_); x_; })
-
-typedef void (*Opcode)(VMContext *vm);
-
 typedef struct TExpr {
     char **var_names;
     double *var_values;
@@ -64,8 +52,8 @@ void emit_bytes(Expr *E, void *p, int size) {
     E->code_size += size;
 }
 
-void emit(Expr *E, Opcode op) {
-    emit_bytes(E, &op, sizeof(op));
+void emit(Expr *E, unsigned char op) {
+    emit_bytes(E, &op, 1);
 }
 
 void deallocate_expression(Expr *e) {
@@ -89,35 +77,71 @@ void skip_spaces(const char **s) {
     }
 }
 
-void op_drop(VMContext *vm) { vm->sp--; }
-void op_constant(VMContext *vm) { *vm->sp++ = FETCH(vm, double); }
-void op_assign(VMContext *vm) { vm->expr->var_values[FETCH(vm, int)] = vm->sp[-1]; }
-void op_variable(VMContext *vm) { *vm->sp++ = vm->expr->var_values[FETCH(vm, int)]; }
-void op_neg(VMContext *vm) { vm->sp[-1] = - vm->sp[-1]; }
-void op_add(VMContext *vm) { vm->sp[-2] += vm->sp[-1]; --vm->sp; }
-void op_mul(VMContext *vm) { vm->sp[-2] *= vm->sp[-1]; --vm->sp; }
-void op_sub(VMContext *vm) { vm->sp[-2] -= vm->sp[-1]; --vm->sp; }
-void op_div(VMContext *vm) { vm->sp[-2] /= vm->sp[-1]; --vm->sp; }
-void op_lt(VMContext *vm) { vm->sp[-2] = vm->sp[-2] < vm->sp[-1]; --vm->sp; }
-void op_le(VMContext *vm) { vm->sp[-2] = vm->sp[-2] <= vm->sp[-1]; --vm->sp; }
-void op_gt(VMContext *vm) { vm->sp[-2] = vm->sp[-2] > vm->sp[-1]; --vm->sp; }
-void op_ge(VMContext *vm) { vm->sp[-2] = vm->sp[-2] >= vm->sp[-1]; --vm->sp; }
-void op_eq(VMContext *vm) { vm->sp[-2] = vm->sp[-2] == vm->sp[-1]; --vm->sp; }
-void op_ne(VMContext *vm) { vm->sp[-2] = vm->sp[-2] != vm->sp[-1]; --vm->sp; }
-void op_bitand(VMContext *vm) { vm->sp[-2] = (unsigned)vm->sp[-2] & (unsigned)vm->sp[-1]; --vm->sp; }
-void op_bitor(VMContext *vm) { vm->sp[-2] = (unsigned)vm->sp[-2] | (unsigned)vm->sp[-1]; --vm->sp; }
-void op_bitxor(VMContext *vm) { vm->sp[-2] = (unsigned)vm->sp[-2] ^ (unsigned)vm->sp[-1]; --vm->sp; }
-void op_lsh(VMContext *vm) { vm->sp[-2] = (unsigned)vm->sp[-2] << (unsigned)vm->sp[-1]; --vm->sp; }
-void op_rsh(VMContext *vm) { vm->sp[-2] = (unsigned)vm->sp[-2] >> (unsigned)vm->sp[-1]; --vm->sp; }
-void op_and(VMContext *vm) { vm->sp[-2] = vm->sp[-2]!=0 && vm->sp[-1]!=0; --vm->sp; }
-void op_or(VMContext *vm) { vm->sp[-2] = vm->sp[-2]!=0 || vm->sp[-1]!=0; --vm->sp; }
-void op_jmp(VMContext *vm) { int addr = FETCH(vm, int); vm->ip = vm->expr->code+addr; }
-void op_jfalse(VMContext *vm) { int addr = FETCH(vm, int); if (vm->sp[-1] == 0) vm->ip = vm->expr->code+addr; }
+#define op_drop      0x00
+#define op_constant  0x01
+#define op_assign    0x02
+#define op_variable  0x03
+#define op_neg       0x04
+#define op_add       0x05
+#define op_mul       0x06
+#define op_sub       0x07
+#define op_div       0x08
+#define op_lt        0x09
+#define op_le        0x0A
+#define op_gt        0x0B
+#define op_ge        0x0C
+#define op_eq        0x0D
+#define op_ne        0x0E
+#define op_bitand    0x0F
+#define op_bitor     0x10
+#define op_bitxor    0x11
+#define op_lsh       0x12
+#define op_rsh       0x13
+#define op_and       0x14
+#define op_or        0x15
+#define op_jmp       0x16
+#define op_jfalse    0x17
+
+double eval_expression(Expr *E) {
+    double *sp = alloca(E->stack_size * sizeof(double));
+    unsigned char *code = E->code, *ip = code, *end = ip + E->code_size;
+    #define FETCH(T_) ({ T_ x_; memcpy(&x_, ip, sizeof(x_)); ip += sizeof(x_); x_; })
+    while (ip != end) {
+        switch(*ip++) {
+            case op_drop: sp--; continue;
+            case op_constant: *sp++ = FETCH(double); continue;
+            case op_assign: E->var_values[FETCH(int)] = sp[-1]; continue;
+            case op_variable: *sp++ = E->var_values[FETCH(int)]; continue;
+            case op_neg: sp[-1] = - sp[-1]; continue;
+            case op_add: sp[-2] += sp[-1]; --sp; continue;
+            case op_mul: sp[-2] *= sp[-1]; --sp; continue;
+            case op_sub: sp[-2] -= sp[-1]; --sp; continue;
+            case op_div: sp[-2] /= sp[-1]; --sp; continue;
+            case op_lt: sp[-2] = sp[-2] < sp[-1]; --sp; continue;
+            case op_le: sp[-2] = sp[-2] <= sp[-1]; --sp; continue;
+            case op_gt: sp[-2] = sp[-2] > sp[-1]; --sp; continue;
+            case op_ge: sp[-2] = sp[-2] >= sp[-1]; --sp; continue;
+            case op_eq: sp[-2] = sp[-2] == sp[-1]; --sp; continue;
+            case op_ne: sp[-2] = sp[-2] != sp[-1]; --sp; continue;
+            case op_bitand: sp[-2] = (unsigned)sp[-2] & (unsigned)sp[-1]; --sp; continue;
+            case op_bitor: sp[-2] = (unsigned)sp[-2] | (unsigned)sp[-1]; --sp; continue;
+            case op_bitxor: sp[-2] = (unsigned)sp[-2] ^ (unsigned)sp[-1]; --sp; continue;
+            case op_lsh: sp[-2] = (unsigned)sp[-2] << (unsigned)sp[-1]; --sp; continue;
+            case op_rsh: sp[-2] = (unsigned)sp[-2] >> (unsigned)sp[-1]; --sp; continue;
+            case op_and: sp[-2] = sp[-2]!=0 && sp[-1]!=0; --sp; continue;
+            case op_or: sp[-2] = sp[-2]!=0 || sp[-1]!=0; --sp; continue;
+            case op_jmp: { int addr = FETCH(int); ip = code+addr; } continue;
+            case op_jfalse: { int addr = FETCH(int); if (sp[-1] == 0) ip = code+addr; } continue;
+        }
+    }
+    #undef FETCH
+    return sp[-1];
+}
 
 typedef struct TOperator {
     const char *name;
     int level, rassoc;
-    Opcode opcode;
+    unsigned char opcode;
 } Operator;
 
 static Operator ops[] = {
@@ -267,15 +291,6 @@ Expr *parse_expression(const char **s) {
     Expr *E = allocate_expression();
     parse(E, s, MAX_LEVEL, 0);
     return E;
-}
-
-double eval_expression(Expr *E) {
-    VMContext vm = { E, alloca(E->stack_size * sizeof(double)), E->code };
-    const unsigned char *end = E->code + E->code_size;
-    while (vm.ip != end) {
-        FETCH(&vm, Opcode)(&vm);
-    }
-    return vm.sp[-1];
 }
 
 int main(int argc, const char *argv[]) {
