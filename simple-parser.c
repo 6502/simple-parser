@@ -33,7 +33,7 @@ typedef struct TExpr {
 static Expr *allocate_expression() {
     Expr *e = mem_alloc(sizeof(Expr));
     e->var_names = mem_alloc(sizeof(char *)*10);
-    e->var_values = mem_alloc(sizeof(char *)*10);
+    e->var_values = mem_alloc(sizeof(double)*10);
     e->var_size = 0; e->var_alloc = 10;
     e->code = mem_alloc(100);
     e->code_size = 0; e->code_alloc = 100;
