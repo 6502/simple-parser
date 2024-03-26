@@ -23,6 +23,9 @@ void mem_dealloc(void *p) {
 }
 
 typedef struct TExpr {
+    char **func_names;
+    struct TExpr **func_values;
+    int func_size, func_alloc;
     char **var_names;
     double *var_values;
     int var_size, var_alloc;
@@ -32,12 +35,19 @@ typedef struct TExpr {
 
 static Expr *allocate_expression() {
     Expr *e = mem_alloc(sizeof(Expr));
+
+    e->func_names = mem_alloc(sizeof(char *)*10);
+    e->func_values = mem_alloc(sizeof(char *)*10);
+    e->func_size = 0; e->func_alloc = 10;
+
     e->var_names = mem_alloc(sizeof(char *)*10);
     e->var_values = mem_alloc(sizeof(double)*10);
     e->var_size = 0; e->var_alloc = 10;
+
     e->code = mem_alloc(100);
     e->code_size = 0; e->code_alloc = 100;
     e->stack_size = 0;
+
     return e;
 }
 
@@ -59,8 +69,14 @@ void emit(Expr *E, unsigned char op) {
 void deallocate_expression(Expr *e) {
     if (e) {
         for (int i=0; i<e->var_size; i++) mem_dealloc(e->var_names[i]);
+        for (int i=0; i<e->func_size; i++) {
+            mem_dealloc(e->func_names[i]);
+            if (e->func_values[i] != e) deallocate_expression(e->func_values[i]);
+        }
         mem_dealloc(e->var_names);
         mem_dealloc(e->var_values);
+        mem_dealloc(e->func_names);
+        mem_dealloc(e->func_values);
         mem_dealloc(e->code);
         mem_dealloc(e);
     }
@@ -101,18 +117,20 @@ void skip_spaces(const char **s) {
 #define op_or        0x15
 #define op_jmp       0x16
 #define op_jfalse    0x17
-#define op_halt      0x18
+#define op_fcall     0x18
+#define op_halt      0x19
 
-double eval_expression(Expr *E) {
+double eval_expression(Expr *E, double *args) {
     double *sp = alloca(E->stack_size * sizeof(double));
     unsigned char *code = E->code, *ip = code;
+    if (args == NULL) args = E->var_values;
     #define FETCH(T_) ({ T_ x_; memcpy(&x_, ip, sizeof(x_)); ip += sizeof(x_); x_; })
     for(;;) {
         switch(*ip++) {
             case op_drop: sp--; continue;
             case op_constant: *sp++ = FETCH(double); continue;
             case op_assign: E->var_values[FETCH(int)] = sp[-1]; continue;
-            case op_variable: *sp++ = E->var_values[FETCH(int)]; continue;
+            case op_variable: *sp++ = args[FETCH(int)]; continue;
             case op_neg: sp[-1] = - sp[-1]; continue;
             case op_add: sp[-2] += sp[-1]; --sp; continue;
             case op_mul: sp[-2] *= sp[-1]; --sp; continue;
@@ -133,6 +151,11 @@ double eval_expression(Expr *E) {
             case op_or: sp[-2] = sp[-2]!=0 || sp[-1]!=0; --sp; continue;
             case op_jmp: { int addr = FETCH(int); ip = code+addr; } continue;
             case op_jfalse: { int addr = FETCH(int); if (sp[-1] == 0) ip = code+addr; } continue;
+            case op_fcall: {
+                Expr *f = E->func_values[FETCH(int)]; sp -= f->var_size;
+                *sp = eval_expression(f, sp); sp++;
+                continue;
+            }
             case op_halt: return sp[-1];
         }
     }
@@ -274,6 +297,31 @@ static void parse(Expr *E, const char **s, int level, int sp) {
                 memcpy(E->code+jquit, &E->code_size, sizeof(int));
                 return;
             }
+            if (**s == '(') {
+                while (i<E->func_size && (strncmp(E->func_names[i], s0, n) != 0 || E->func_names[i][n] != '\0')) {
+                    ++i;
+                }
+                if (i == E->func_size) {
+                    for (int i=0,n=*s-s0; i<n; i++) fputc(s0[i], stderr);
+                    fprintf(stderr, ": ");
+                    error("Unknown function");
+                }
+                (*s)++;
+                int np = 0;
+                while(np < E->func_values[i]->var_size) {
+                    skip_spaces(s);
+                    if (**s == ')') error("Wrong number of parameters for function call");
+                    parse(E, s, MAX_LEVEL, sp+np);
+                    skip_spaces(s);
+                    if (**s == ',') (*s)++; else if (**s != ')') error("',' or ')' expected");
+                    np++;
+                }
+                skip_spaces(s); if (**s != ')') error("')' expected");
+                (*s)++;
+                emit(E, op_fcall);
+                emit_bytes(E, &i, sizeof(int));
+                return;
+            }
             while (i<E->var_size && (strncmp(E->var_names[i], s0, n) != 0 || E->var_names[i][n] != '\0')) {
                 ++i;
             }
@@ -338,7 +386,7 @@ int main(int argc, const char *argv[]) {
         Expr *e = parse_expression(&s);
         skip_spaces(&s);
         if (*s != '\0') error("Extra characters at end of expression");
-        printf("Value --> %.18g\n", eval_expression(e));
+        printf("Value --> %.18g\n", eval_expression(e, NULL));
         deallocate_expression(e);
     }
     return 0;
