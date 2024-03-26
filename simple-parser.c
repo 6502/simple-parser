@@ -374,6 +374,66 @@ static void parse(Expr *E, const char **s, int level, int sp) {
 
 Expr *parse_expression(const char **s) {
     Expr *E = allocate_expression();
+    skip_spaces(s);
+    while (strncmp(*s, "def", 3) == 0 && !alphanum((*s)[3])) {
+        (*s) += 3;
+        skip_spaces(s);
+        if (!alpha(**s)) error("Function name expected");
+        const char *s0 = *s;
+        while (alphanum(**s)) (*s)++;
+        int n = *s - s0;
+        int i = 0;
+        while (i < E->func_size && (strncmp(E->func_names[i], s0, n) != 0 || E->func_names[i][n] != '\0')) i++;
+        if (i < E->func_size) error("Duplicated function name");
+        if (E->func_size == E->func_alloc) {
+            int nalloc = E->func_alloc*2;
+            E->func_names = mem_realloc(E->func_names, nalloc*sizeof(char *));
+            E->func_values = mem_realloc(E->func_values, nalloc*sizeof(Expr *));
+            E->func_alloc = nalloc;
+        }
+        E->func_names[i] = mem_alloc(n+1);
+        memcpy(E->func_names[i], s0, n);
+        E->func_names[i][n] = '\0';
+        Expr *f = E->func_values[i] = allocate_expression();
+        E->func_size++;
+        f->func_names[0] = mem_alloc(n+1);
+        memcpy(f->func_names[0], s0, n);
+        f->func_names[0][n] = '\0';
+        f->func_values[0] = f;
+        f->func_size++;
+        skip_spaces(s);
+        if (**s != '(') error("'(' expected");
+        (*s)++;
+        for(;;) {
+            skip_spaces(s);
+            if (**s == ')') break;
+            if (!alpha(**s)) error("Parameter name expected");
+            const char *s0 = *s;
+            while (alphanum(**s)) (*s)++;
+            int n = *s - s0;
+            int j = 0;
+            while (j < f->var_size && (strncmp(f->var_names[j], s0, n) != 0 || f->var_names[j][n] != '\0')) j++;
+            if (j < f->var_size) error("Duplicated parameter name");
+            if (f->var_size == f->var_alloc) {
+                int nalloc = f->var_alloc*2;
+                f->var_names = mem_realloc(f->var_names, nalloc*sizeof(char *));
+                f->var_values = mem_realloc(f->var_values, nalloc*sizeof(double));
+                f->var_alloc = nalloc;
+            }
+            f->var_size++;
+            f->var_names[j] = mem_alloc(n+1);
+            memcpy(f->var_names[j], s0, n);
+            f->var_names[j][n] = '\0';
+            f->var_values[j] = 0;
+            skip_spaces(s);
+            if (**s == ',') (*s)++; else if (**s != ')') error("',' or ')' expected");
+        }
+        (*s)++;
+        skip_spaces(s);
+        if (**s != '{') error("'{' expected");
+        parse(f, s, 0, 0);
+        emit(f, op_halt);
+    }
     parse(E, s, MAX_LEVEL, 0);
     emit(E, op_halt);
     return E;
